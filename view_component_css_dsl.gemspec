@@ -15,7 +15,7 @@ Gem::Specification.new do |spec|
     Smart-merges Tailwind utility classes (spacing, modifier prefixes,
     arbitrary values) so callers can safely override per-instance styles.
   MSG
-  spec.homepage = "https://github.com/jeffdlange/view_component_css_dsl"
+  spec.homepage = "https://github.com/SOFware/view_component_css_dsl"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.1"
 
