@@ -11,7 +11,7 @@ class ButtonComponent < ApplicationComponent
 end
 ```
 
-Replaces hand-rolled, styling boilerplate with declarative one-liners for base styles, variants, and conditionals. Callers override per-instance via `class:` — smart-merge handles the rest.
+Replaces hand-rolled styling boilerplate with declarative one-liners for base styles, variants, and conditionals. Callers override per-instance via `class:` — smart-merge handles the rest.
 
 ## Why
 
@@ -57,10 +57,9 @@ class ButtonComponent < ApplicationComponent
   css variant: :danger,  style: "bg-red-500 text-white"
   css :disabled?,        style: "opacity-50"
 
-  def initialize(variant: :primary, disabled: false, **html_attrs)
+  def initialize(variant: :primary, disabled: false)
     @variant = variant
     @disabled = disabled
-    @html_attrs = html_attrs
   end
 
   private
@@ -81,7 +80,7 @@ A handful of opinions are baked into this DSL. It still works if you ignore them
 
 Not in external stylesheets. Open the component file and you see exactly what it looks like. No grepping for selectors. No cascade surprises.
 
-### Significant Styling lives on the top-level element
+### Significant styling lives on the top-level element
 
 A component renders one semantic block; that block is where its appearance lives. The DSL's `css` declarations describe that block.
 
@@ -103,15 +102,13 @@ class CardComponent < ApplicationComponent
     Card::HeaderComponent.new(type:, **html_attrs, &block)
   }
 
-  def initialize(type)
-    @type =  type
+  def initialize(type:)
+    @type = type
   end
 
   private
 
   attr_reader :type
-
-  # ...
 end
 
 class Card::HeaderComponent < ApplicationComponent
@@ -119,7 +116,7 @@ class Card::HeaderComponent < ApplicationComponent
   css type: :success, style: "text-sm"
   css type: :danger,  style: "text-lg font-bold"
 
-  def initialize(type)
+  def initialize(type:)
     @type = type
   end
 end
@@ -180,10 +177,10 @@ Splat `**html_attrs` onto the top-level element.
 <% end %>
 ```
 
-Three conventions to follow:
+Two conventions to follow:
 
 1. **`include ViewComponentCssDsl`** in your base component class. To opt out for one component, inherit from `ViewComponent::Base` directly.
-2. **Splat `**html_attrs`** onto the top-level element. This forwards caller-passed attributes (`data:`, `id:`, `aria:`, etc.) to the DOM.
+2. **Splat `**html_attrs`** onto the top-level element. This is what makes caller-passed attributes (`class:`, `data:`, `id:`, `aria:`, etc.) reach the DOM. A future version may automate this away.
 
 ## The four `css` patterns
 
@@ -240,39 +237,65 @@ Procs returning `nil` are dropped. Procs participate in smart_merge.
 
 ## Caller customization
 
-Any `class: "..."` the caller passes is captured into `@html_attrs[:class]` and smart-merged with the component's defaults. The caller wins on category collisions:
+Callers can pass `class:` (smart-merged with the component's defaults), plus any other HTML attribute (`data:`, `id:`, `aria:`, etc.) — they all land on the top-level element without the component having to opt each one in.
+
+### Vanilla call
 
 ```ruby
 class ButtonComponent < ApplicationComponent
   css "rounded px-4 py-2 bg-blue-500 text-white"
 end
 
-# Caller:
-render ButtonComponent.new(class: "bg-red-500 mt-4")
-
-# Final class string on the button element:
-# "rounded px-4 py-2 bg-red-500 text-white mt-4"
-# - caller's bg-red-500 replaced the component's bg-blue-500
-# - mt-4 added (no margin in the base)
-# - rounded, px-4, py-2 retained
+render ButtonComponent.new
 ```
+
+Renders:
+
+```html
+<button class="rounded px-4 py-2 bg-blue-500 text-white"></button>
+```
+
+### Call with overrides
+
+```ruby
+render ButtonComponent.new(
+  class: "mt-4 bg-red-500",
+  data: {id: "submit-btn"},
+  aria: {label: "Submit form"}
+)
+```
+
+Renders:
+
+```html
+<button
+  class="rounded px-4 py-2 mt-4 bg-red-500 text-white"
+  data-id="submit-btn"
+  aria-label="Submit form">
+</button>
+```
+
+- `bg-red-500` from the caller replaced `bg-blue-500` from the component (same category).
+- `mt-4` was added (no margin in the base).
+- `rounded`, `px-4`, `py-2`, `text-white` retained from the base.
+- `data-id` and `aria-label` flow through to the DOM untouched.
 
 ## Smart merge behavior
 
-Smart-merge handles Tailwind's conventions so caller and component CSS can coexist sensibly:
+Smart-merge handles Tailwind's conventions so caller and component CSS can coexist sensibly. In every row below, the **Component** column is what the component declared via `css`, and the **Caller** column is what was passed in `class:` at the call site.
 
-| Scenario | Result |
-| --- | --- |
-| `"bg-white"` + `"bg-blue-500"` | `"bg-blue-500"` (category win) |
-| `"p-4"` + `"p-8"` | `"p-8"` (all-padding override) |
-| `"px-4"` + `"py-2"` | `"px-4 py-2"` (different axes) |
-| `"p-4"` + `"pb-6"` | `"p-4 pb-6"` (specific extends) |
-| `"pl-2"` + `"px-5"` | `"px-5"` (broader axis wins) |
-| `"border-t"` + `"border-t-2"` | `"border-t-2"` |
-| `"border-2 border-red-600"` | both kept (width vs color) |
-| `"bg-white"` + `"hover:bg-blue-500"` | both kept (modifier namespace) |
-| `"hover:bg-blue-500"` + `"hover:bg-red-500"` | `"hover:bg-red-500"` |
-| `"bg-white"` + `"data-[open]:bg-gray-100"` | both kept |
+| Component | Caller | Final classes | Why |
+| --- | --- | --- | --- |
+| `bg-white` | `bg-blue-500` | `bg-blue-500` | Same category (background) — caller wins |
+| `p-4` | `p-8` | `p-8` | All-padding overrides all-padding |
+| `px-4` | `py-2` | `px-4 py-2` | Different spacing axes — both kept |
+| `p-4` | `pb-6` | `p-4 pb-6` | Specific side extends the all-side base |
+| `pl-2` | `px-5` | `px-5` | Broader axis (`x`) absorbs the narrower (`l`) |
+| `border-t` | `border-t-2` | `border-t-2` | Same side, more specific width — caller wins |
+| `border-2` | `border-red-600` | `border-2 border-red-600` | Width and color are independent |
+| `bg-white` | `hover:bg-blue-500` | `bg-white hover:bg-blue-500` | Modifier prefix is its own namespace |
+| `hover:bg-blue-500` | `hover:bg-red-500` | `hover:bg-red-500` | Caller wins within the modifier namespace |
+| `bg-white` | `data-[open]:bg-gray-100` | `bg-white data-[open]:bg-gray-100` | Arbitrary modifier is its own namespace |
 
 Modifier prefixes (`hover:`, `md:`, `dark:`, `group/`, `peer-checked:`, `aria-*`, arbitrary `[…]` values, etc.) form their own merge namespace, so `hover:bg-blue-500` never conflicts with a base `bg-white`.
 

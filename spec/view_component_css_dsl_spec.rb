@@ -709,4 +709,135 @@ RSpec.describe ViewComponentCssDsl do
       end
     end
   end
+
+  describe "auto-extracted html_attrs" do
+    let(:component_class) do
+      Class.new(TestComponent) do
+        css "rounded p-4 bg-white"
+
+        def initialize(variant: :default)
+          @variant = variant
+        end
+      end
+    end
+
+    it "captures `class:` from the caller into @html_attrs" do
+      instance = component_class.new(class: "ml-4")
+      expect(instance.instance_variable_get(:@html_attrs)).to eq({class: "ml-4"})
+    end
+
+    it "captures multiple HTML attrs while leaving declared kwargs alone" do
+      instance = component_class.new(
+        variant: :default, class: "ml-4", data: {foo: "bar"}, id: "x"
+      )
+      attrs = instance.instance_variable_get(:@html_attrs)
+      expect(attrs).to eq({class: "ml-4", data: {foo: "bar"}, id: "x"})
+      expect(instance.instance_variable_get(:@variant)).to eq(:default)
+    end
+
+    it "skips auto-extraction when keyrest is not named html_attrs" do
+      klass = Class.new(TestComponent) do
+        css "base"
+
+        def initialize(**options)
+          @options = options
+        end
+      end
+      instance = klass.new(class: "ml-4", data: {foo: "bar"})
+      # Component asked for everything via **options; nothing was extracted
+      expect(instance.instance_variable_get(:@html_attrs)).to eq({})
+      expect(instance.instance_variable_get(:@options))
+        .to eq({class: "ml-4", data: {foo: "bar"}})
+    end
+
+    it "stays backward-compatible with components that declare **html_attrs" do
+      klass = Class.new(TestComponent) do
+        css "base"
+
+        def initialize(**html_attrs)
+          @html_attrs = html_attrs
+        end
+      end
+      instance = klass.new(class: "ml-4", data: {foo: "bar"})
+      expect(instance.instance_variable_get(:@html_attrs))
+        .to eq({class: "ml-4", data: {foo: "bar"}})
+    end
+  end
+
+  describe "#html_attrs with unified CSS" do
+    let(:unified_component_class) do
+      Class.new(TestComponent) do
+        css "rounded p-4 bg-white"
+
+        def initialize(**html_attrs)
+          @html_attrs = html_attrs
+        end
+      end
+    end
+
+    it "returns empty hash when no html_attrs set" do
+      component = unified_component_class.allocate
+      # Don't set @html_attrs at all
+      expect(component.html_attrs).to eq({})
+    end
+
+    it "includes merged CSS in :class key" do
+      component = unified_component_class.new(data: {foo: "bar"})
+      result = component.html_attrs
+      expect(result[:class]).to include("rounded")
+      expect(result[:class]).to include("p-4")
+      expect(result[:class]).to include("bg-white")
+      expect(result[:data]).to eq({foo: "bar"})
+    end
+
+    it "smart-merges caller's class with component CSS" do
+      component = unified_component_class.new(class: "bg-blue-500", target: "_blank")
+      result = component.html_attrs
+      # Caller's bg-blue-500 should override component's bg-white
+      expect(result[:class]).to include("bg-blue-500")
+      expect(result[:class]).not_to include("bg-white")
+      # But keeps other classes
+      expect(result[:class]).to include("rounded")
+      expect(result[:class]).to include("p-4")
+      expect(result[:target]).to eq("_blank")
+    end
+
+    it "excludes :class when css returns empty string" do
+      component = Class.new(TestComponent) do
+        # No css defined
+        def initialize(**html_attrs)
+          @html_attrs = html_attrs
+        end
+      end.new(data: {foo: "bar"})
+
+      result = component.html_attrs
+      expect(result).not_to have_key(:class)
+      expect(result[:data]).to eq({foo: "bar"})
+    end
+
+    context "with method conditionals that read @html_attrs" do
+      let(:method_conditional_class) do
+        Class.new(TestComponent) do
+          css "base-class"
+          css :disabled?, style: "opacity-50"
+
+          def initialize(**html_attrs)
+            @html_attrs = html_attrs
+          end
+
+          def disabled?
+            # IMPORTANT: Must use @html_attrs, not html_attrs, to avoid recursion
+            @html_attrs[:disabled] == true
+          end
+        end
+      end
+
+      it "works without infinite recursion" do
+        component = method_conditional_class.new(disabled: true)
+        result = component.html_attrs
+        expect(result[:class]).to include("base-class")
+        expect(result[:class]).to include("opacity-50")
+      end
+    end
+  end
 end

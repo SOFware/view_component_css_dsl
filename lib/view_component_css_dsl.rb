@@ -5,11 +5,34 @@ require "active_support/concern"
 require "active_support/core_ext/class/attribute"
 require "active_support/core_ext/object/blank"
 require "active_support/core_ext/hash/except"
+require "active_support/core_ext/hash/slice"
 
 require_relative "view_component_css_dsl/version"
 
 module ViewComponentCssDsl
   extend ActiveSupport::Concern
+
+  # HTML attributes auto-extracted from kwargs at construction time. Anything in
+  # this set is captured into @html_attrs instead of being passed to initialize,
+  # so callers can pass `class:`, `data:`, `aria:`, etc. without the component
+  # declaring them. To opt out, accept a kwarg with the same name in initialize
+  # (e.g. `def initialize(class:)`) or use a keyrest name other than html_attrs.
+  HTML_ATTR_KEYS = Set[
+    :alt, :aria, :autofocus,
+    :class, :colspan, :contenteditable,
+    :data, :dir, :disabled, :download, :draggable,
+    :enterkeyhint,
+    :formaction,
+    :headers, :hidden, :href,
+    :id, :inputmode,
+    :lang, :loading, :low,
+    :media,
+    :onclick, :open, :optimum,
+    :popover, :popovertarget, :popovertargetaction, :preload,
+    :readonly, :rel, :role, :rowspan,
+    :spellcheck, :src, :srcset, :style,
+    :tabindex, :target, :title, :type, :value
+  ].freeze
 
   # Single combined regex for padding/margin spacing (replaces 14 separate patterns)
   # Captures: type (p/m), axis (x/y/t/r/b/l or nil for all), value
@@ -180,6 +203,46 @@ module ViewComponentCssDsl
       end
     end
 
+    # Override `new` to auto-extract HTML attributes from kwargs into @html_attrs,
+    # so components don't need to declare **html_attrs in their initialize signature.
+    # Anything in HTML_ATTR_KEYS that wasn't declared as a kwarg is captured.
+    def new(*args, **kwargs, &block)
+      info = _vc_css_dsl_initialize_info
+      html_attrs = {}
+      if info[:auto_extract]
+        extractable = HTML_ATTR_KEYS.intersection(kwargs.keys) - info[:declared_kwargs]
+        html_attrs = kwargs.extract!(*extractable)
+      end
+
+      instance = allocate
+      instance.instance_variable_set(:@html_attrs, html_attrs)
+      instance.send(:initialize, *args, **kwargs, &block)
+
+      # Merge with any @html_attrs the component set inside initialize (older
+      # components that still declare **html_attrs). Caller-provided values win.
+      existing = instance.instance_variable_get(:@html_attrs) || {}
+      instance.instance_variable_set(:@html_attrs, existing.merge(html_attrs))
+      instance
+    end
+
+    # Analyzes the initialize signature once and caches the result. Auto-extraction
+    # happens unless the component declares a non-html_attrs keyrest (like **options),
+    # in which case the component wants to receive everything itself.
+    def _vc_css_dsl_initialize_info
+      @_vc_css_dsl_initialize_info ||= begin
+        declared_kwargs = Set.new
+        keyrest_name = nil
+        instance_method(:initialize).parameters.each do |type, name|
+          case type
+          when :key, :keyreq then declared_kwargs << name
+          when :keyrest then keyrest_name = name
+          end
+        end
+        auto_extract = keyrest_name.nil? || keyrest_name == :html_attrs
+        {declared_kwargs:, auto_extract:}
+      end
+    end
+
     # Overwrites base css with custom css from the caller, but only if they actually
     # interfere with each other. Modifier prefixes (hover:, md:, first:, etc.) create
     # separate "namespaces" so they don't conflict with base classes.
@@ -286,6 +349,21 @@ module ViewComponentCssDsl
     return "" unless @html_attrs
 
     @html_attrs.fetch(:class, "")
+  end
+
+  # Returns the hash to splat onto the top-level element of a component template:
+  #
+  #   <%= tag.div **html_attrs do %> ... <% end %>
+  #
+  # Includes the smart-merged `:class` and forwards every other caller-passed
+  # HTML attribute (`data:`, `id:`, `aria:`, etc.) to the rendered element.
+  def html_attrs
+    return {} unless @html_attrs
+
+    attrs = @html_attrs.except(:class)
+    rendered_css = css
+    attrs[:class] = rendered_css if rendered_css.present?
+    attrs
   end
 
   private
