@@ -29,7 +29,7 @@ module ViewComponentCssDsl
     :media,
     :onclick, :open, :optimum,
     :popover, :popovertarget, :popovertargetaction, :preload,
-    :readonly, :rel, :role, :rowspan,
+    :readonly, :rel, :required, :role, :rowspan,
     :spellcheck, :src, :srcset, :style,
     :tabindex, :target, :title, :type, :value
   ].freeze

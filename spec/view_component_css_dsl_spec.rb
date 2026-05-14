@@ -710,57 +710,141 @@ RSpec.describe ViewComponentCssDsl do
     end
   end
 
-  describe "auto-extracted html_attrs" do
-    let(:component_class) do
-      Class.new(TestComponent) do
-        css "rounded p-4 bg-white"
+  describe ".new HTML attr extraction" do
+    context "with component that has no keyrest" do
+      let(:component_class) do
+        Class.new(TestComponent) do
+          def initialize(text:)
+            @text = text
+          end
 
-        def initialize(variant: :default)
-          @variant = variant
+          attr_reader :text
         end
+      end
+
+      it "extracts HTML attrs before initialize" do
+        component = component_class.new(text: "Hello", class: "custom", id: "my-id")
+
+        expect(component.instance_variable_get(:@html_attrs)).to include(
+          class: "custom",
+          id: "my-id"
+        )
+        expect(component.text).to eq("Hello")
+      end
+
+      it "extracts data attrs" do
+        component = component_class.new(text: "Hello", data: {controller: "foo"})
+
+        expect(component.instance_variable_get(:@html_attrs)).to include(
+          data: {controller: "foo"}
+        )
+      end
+
+      it "extracts aria attrs" do
+        component = component_class.new(text: "Hello", aria: {label: "My label"})
+
+        expect(component.instance_variable_get(:@html_attrs)).to include(
+          aria: {label: "My label"}
+        )
       end
     end
 
-    it "captures `class:` from the caller into @html_attrs" do
-      instance = component_class.new(class: "ml-4")
-      expect(instance.instance_variable_get(:@html_attrs)).to eq({class: "ml-4"})
+    context "with component that uses **html_attrs keyrest" do
+      let(:component_class) do
+        Class.new(TestComponent) do
+          def initialize(text:, **html_attrs)
+            @text = text
+            @html_attrs = html_attrs
+          end
+
+          attr_reader :text
+        end
+      end
+
+      it "extracts HTML attrs" do
+        component = component_class.new(text: "Hello", class: "custom", id: "my-id")
+
+        expect(component.instance_variable_get(:@html_attrs)).to include(
+          class: "custom",
+          id: "my-id"
+        )
+      end
     end
 
-    it "captures multiple HTML attrs while leaving declared kwargs alone" do
-      instance = component_class.new(
-        variant: :default, class: "ml-4", data: {foo: "bar"}, id: "x"
+    context "with component that uses **options (not **html_attrs)" do
+      let(:component_class) do
+        Class.new(TestComponent) do
+          def initialize(text:, **options)
+            @text = text
+            @options = options
+          end
+
+          attr_reader :text, :options
+        end
+      end
+
+      it "does NOT extract HTML attrs - passes all kwargs to initialize" do
+        component = component_class.new(
+          text: "Hello",
+          class: "custom",
+          id: "my-id",
+          custom_option: "foo"
+        )
+
+        # HTML attrs should NOT be extracted
+        expect(component.instance_variable_get(:@html_attrs)).to eq({})
+
+        # All kwargs should be passed through to **options
+        expect(component.options).to include(
+          class: "custom",
+          id: "my-id",
+          custom_option: "foo"
+        )
+      end
+    end
+
+    context "with component that declares an HTML attr as explicit kwarg" do
+      let(:component_class) do
+        Class.new(TestComponent) do
+          def initialize(id:, text:)
+            @id = id
+            @text = text
+          end
+
+          attr_reader :id, :text
+        end
+      end
+
+      it "does NOT extract declared kwargs even if they're HTML attr names" do
+        component = component_class.new(id: "explicit-id", text: "Hello", class: "custom")
+
+        # id should NOT be extracted (it's a declared kwarg)
+        expect(component.instance_variable_get(:@html_attrs)).not_to have_key(:id)
+        expect(component.instance_variable_get(:@html_attrs)).to include(class: "custom")
+
+        # id should be passed to initialize normally
+        expect(component.id).to eq("explicit-id")
+      end
+    end
+  end
+
+  describe "HTML_ATTR_KEYS constant" do
+    it "includes common HTML attributes" do
+      expect(ViewComponentCssDsl::HTML_ATTR_KEYS).to include(:class, :id, :style, :title)
+    end
+
+    it "includes link/navigation attributes" do
+      expect(ViewComponentCssDsl::HTML_ATTR_KEYS).to include(:href, :target, :rel)
+    end
+
+    it "includes form-related attributes" do
+      expect(ViewComponentCssDsl::HTML_ATTR_KEYS).to include(
+        :disabled, :readonly, :required, :value, :type
       )
-      attrs = instance.instance_variable_get(:@html_attrs)
-      expect(attrs).to eq({class: "ml-4", data: {foo: "bar"}, id: "x"})
-      expect(instance.instance_variable_get(:@variant)).to eq(:default)
     end
 
-    it "skips auto-extraction when keyrest is not named html_attrs" do
-      klass = Class.new(TestComponent) do
-        css "base"
-
-        def initialize(**options)
-          @options = options
-        end
-      end
-      instance = klass.new(class: "ml-4", data: {foo: "bar"})
-      # Component asked for everything via **options; nothing was extracted
-      expect(instance.instance_variable_get(:@html_attrs)).to eq({})
-      expect(instance.instance_variable_get(:@options))
-        .to eq({class: "ml-4", data: {foo: "bar"}})
-    end
-
-    it "stays backward-compatible with components that declare **html_attrs" do
-      klass = Class.new(TestComponent) do
-        css "base"
-
-        def initialize(**html_attrs)
-          @html_attrs = html_attrs
-        end
-      end
-      instance = klass.new(class: "ml-4", data: {foo: "bar"})
-      expect(instance.instance_variable_get(:@html_attrs))
-        .to eq({class: "ml-4", data: {foo: "bar"}})
+    it "includes accessibility attributes" do
+      expect(ViewComponentCssDsl::HTML_ATTR_KEYS).to include(:aria, :role, :tabindex)
     end
   end
 
