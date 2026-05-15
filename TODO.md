@@ -92,37 +92,9 @@ Stay hand-rolled if any of:
 - Audit shows we don't actually exercise the missing utility groups, so the
   gain is small relative to the dependency cost.
 
-## 2. Promote data/aria/HTML attribute declarations to first-class DSL
+## 2. Eliminate the template splat boilerplate
 
-Currently `data_attrs` and `aria_attrs` are override methods quietly picked up by `html_attrs` and splatted onto the top-level element. They look like ordinary instance methods, which is bad DX — a reader has to know about the magic to realize they affect rendered output. Goal: declarations sit alongside `css` so the mental model is "everything I declare up here ends up in `html_attrs` and gets spread on the top-level element."
-
-Research, not committed implementation. Difficulties to work through first:
-
-### Conditional logic with ivar / method access
-
-Real-world default-attr methods aren't constant — they call helpers and branch on instance state:
-
-```ruby
-def data_attrs
-  {
-    action: token_list(input_action, ("debounced:input->form#submit" if @auto_submit)).presence,
-    controller: (token_list(autofocus: true) if @autofocus),
-    turbo_permanent: (true if turbo_permanent?)
-  }.compact
-end
-```
-
-This is trivial in a method body. Translating to class-level declarations is non-obvious. Procs (`instance_exec`'d at render time, like `css -> { ... }`) are the obvious lever, but possibly less elegant, harder to read for non-trivial logic, and maybe less performant. Worth prototyping before committing.
-
-### Scope and syntax
-
-Should the DSL cover *any* HTML attribute, not just `data`/`aria`/`class`? Likely yes — recent real example: a default `target` had to be inlined in the template alongside `**html_attrs`, leaving the caller no override path.
-
-Naming is tricky. The term `html_attrs` already means the rendered hash and the template splat — reusing it for the declaration syntax risks confusion. The existing `css` deliberately doesn't look like it's writing to `html_attrs` even though it is, and grouping declarators by concern (`css`, `data`, `aria`, generic `attr`) probably reads better than a single nested `html_attrs` block. Worth prototyping both.
-
-### Stretch: eliminate the template splat boilerplate
-
-Spitballing, not committed. Even with first-class declarations, templates still need `<%= tag.div **html_attrs do %>`. One direction worth researching: a helper that takes just the tag name and injects attrs automatically:
+Even with first-class declarations, templates still need `<%= tag.div **html_attrs do %>`. One direction worth researching: a helper that takes just the tag name and injects attrs automatically:
 
 ```erb
 <%= top_level_element :button do %>
@@ -131,12 +103,6 @@ Spitballing, not committed. Even with first-class declarations, templates still 
 ```
 
 Defaulting to `div` when no tag is given. Open question whether there are real cases where the dev needs to intervene between the helper and the splat.
-
-### Research
-
-- Prior art: Phlex, ViewComponentContrib.
-- Prototype syntax options on real Forge components with non-trivial conditional logic.
-- Benchmark proc-based vs method-based if proc looks viable.
 
 ## 3. Lightweight in-template styling for sub-elements
 
