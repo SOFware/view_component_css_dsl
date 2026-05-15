@@ -17,7 +17,7 @@ Gem::Specification.new do |spec|
   MSG
   spec.homepage = "https://github.com/SOFware/view_component_css_dsl"
   spec.license = "MIT"
-  spec.required_ruby_version = ">= 3.1"
+  spec.required_ruby_version = ">= 3.2"
 
   spec.metadata["source_code_uri"] = spec.homepage
   spec.metadata["changelog_uri"] = "#{spec.homepage}/blob/main/CHANGELOG.md"

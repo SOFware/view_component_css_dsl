@@ -128,7 +128,7 @@ If you find yourself reaching inside a component to customize a sub-element, esp
 
 ## Requirements
 
-- Ruby 3.1+
+- Ruby 3.2+ (matches the floor for `view_component >= 4.0`)
 - [`view_component`](https://github.com/ViewComponent/view_component) `>= 4.0`
 - [Tailwind CSS](https://tailwindcss.com/) `>= 3.0` (the merge logic targets Tailwind's class-name syntax; v4 works — the syntax is compatible)
 
