@@ -6,6 +6,7 @@ require "active_support/core_ext/class/attribute"
 require "active_support/core_ext/object/blank"
 require "active_support/core_ext/hash/except"
 require "active_support/core_ext/hash/slice"
+require "active_support/core_ext/object/inclusion"
 
 require_relative "view_component_css_dsl/version"
 
@@ -29,7 +30,7 @@ module ViewComponentCssDsl
     :media,
     :onclick, :open, :optimum,
     :popover, :popovertarget, :popovertargetaction, :preload,
-    :readonly, :rel, :required, :role, :rowspan,
+    :readonly, :rel, :role, :rowspan,
     :spellcheck, :src, :srcset, :style,
     :tabindex, :target, :title, :type, :value
   ].freeze
@@ -207,9 +208,9 @@ module ViewComponentCssDsl
     # so components don't need to declare **html_attrs in their initialize signature.
     # Anything in HTML_ATTR_KEYS that wasn't declared as a kwarg is captured.
     def new(*args, **kwargs, &block)
-      info = _vc_css_dsl_initialize_info
+      info = initialize_params_info
       html_attrs = {}
-      if info[:auto_extract]
+      if info[:uses_html_attrs_keyrest]
         extractable = HTML_ATTR_KEYS.intersection(kwargs.keys) - info[:declared_kwargs]
         html_attrs = kwargs.extract!(*extractable)
       end
@@ -228,8 +229,8 @@ module ViewComponentCssDsl
     # Analyzes the initialize signature once and caches the result. Auto-extraction
     # happens unless the component declares a non-html_attrs keyrest (like **options),
     # in which case the component wants to receive everything itself.
-    def _vc_css_dsl_initialize_info
-      @_vc_css_dsl_initialize_info ||= begin
+    def initialize_params_info
+      @initialize_params_info ||= begin
         declared_kwargs = Set.new
         keyrest_name = nil
         instance_method(:initialize).parameters.each do |type, name|
@@ -238,8 +239,8 @@ module ViewComponentCssDsl
           when :keyrest then keyrest_name = name
           end
         end
-        auto_extract = keyrest_name.nil? || keyrest_name == :html_attrs
-        {declared_kwargs:, auto_extract:}
+        uses_html_attrs_keyrest = keyrest_name.nil? || keyrest_name == :html_attrs
+        {declared_kwargs:, uses_html_attrs_keyrest:}
       end
     end
 
@@ -355,15 +356,94 @@ module ViewComponentCssDsl
   #
   #   <%= tag.div **html_attrs do %> ... <% end %>
   #
-  # Includes the smart-merged `:class` and forwards every other caller-passed
-  # HTML attribute (`data:`, `id:`, `aria:`, etc.) to the rendered element.
+  # Includes the smart-merged `:class`, merged `:data` and `:aria` (from any
+  # component-defined defaults + caller overrides), and every other caller-passed
+  # HTML attribute (`id:`, `role:`, etc.) forwarded to the rendered element.
   def html_attrs
     return {} unless @html_attrs
 
-    attrs = @html_attrs.except(:class)
-    rendered_css = css
-    attrs[:class] = rendered_css if rendered_css.present?
-    attrs
+    result = @html_attrs.except(:aria, :class, :data)
+
+    # Only include aria/data if they have content, otherwise they'd override
+    # inline attrs in templates like: tag.div data: {foo: "bar"}, **html_attrs
+    aria = final_aria_attrs
+    data = final_data_attrs
+    result[:aria] = aria if aria.present?
+    result[:data] = data if data.present?
+
+    css_value = css
+    result[:class] = css_value if css_value.present?
+    result
+  end
+
+  # Overwrite in component subclass to set default data-attrs. They will be merged
+  # into html_attrs.
+  #
+  # Example:
+  #
+  # def data_attrs
+  #   {
+  #     controller: "some-stimulus-controller",
+  #     action: "click->some-stimulus-controller#someAction",
+  #     active: active?
+  #   }
+  # end
+  #
+  def data_attrs
+    {}
+  end
+
+  DATA_MERGE_KEYS = %i[controller action].freeze
+
+  # Loop through data-attrs and merge values from DATA_MERGE_KEYS. Overwrite any
+  # others.
+  #
+  # Ensures the caller doesn't wipe out e.g. data-controller or data-action values
+  # defined by the dev in #data_attrs
+  #
+  # Example:
+  #
+  # Assuming MyComponent with #data_attrs defined as:
+  #
+  # def data_attrs
+  #   {
+  #     controller: "foo",
+  #     label: "Hello world"
+  #   }
+  # end
+  #
+  # MyComponent.new(data: {controller: "bar", label: "Goodbye"})
+  #
+  # Will output the following data-attrs:
+  #
+  # <div data-controller="foo bar" data-label="Goodbye">
+  #
+  # Notice:
+  # - data-controller from the caller is set alongside "foo" instead of overwriting
+  # - In contrast, data-label from the caller overwrites the default
+  #
+  def final_data_attrs
+    incoming_data = @html_attrs.fetch(:data, {})
+    incoming_data.each_with_object(data_attrs) do |(key, value), final_data|
+      final_value = if key.in?(DATA_MERGE_KEYS)
+        [data_attrs[key], value].compact.join(" ")
+      else
+        value
+      end
+
+      final_data[key] = final_value
+    end
+  end
+
+  # Overwrite in subclass to define default aria-attrs
+  def aria_attrs
+    {}
+  end
+
+  # Using merge allows for default value #aria_attrs, but also for dev to override
+  # that value per-instance as needed
+  def final_aria_attrs
+    aria_attrs.merge(@html_attrs.fetch(:aria, {}))
   end
 
   private

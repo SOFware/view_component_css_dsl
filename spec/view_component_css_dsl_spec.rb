@@ -830,21 +830,301 @@ RSpec.describe ViewComponentCssDsl do
 
   describe "HTML_ATTR_KEYS constant" do
     it "includes common HTML attributes" do
-      expect(ViewComponentCssDsl::HTML_ATTR_KEYS).to include(:class, :id, :style, :title)
+      expect(ViewComponentCssDsl::HTML_ATTR_KEYS).to include(
+        :class, :id, :data, :aria, :style, :title, :disabled, :hidden
+      )
     end
 
     it "includes link/navigation attributes" do
-      expect(ViewComponentCssDsl::HTML_ATTR_KEYS).to include(:href, :target, :rel)
+      expect(ViewComponentCssDsl::HTML_ATTR_KEYS).to include(
+        :href, :target, :rel, :download
+      )
     end
 
     it "includes form-related attributes" do
       expect(ViewComponentCssDsl::HTML_ATTR_KEYS).to include(
-        :disabled, :readonly, :required, :value, :type
+        :type, :value, :disabled, :readonly, :autofocus
       )
     end
 
     it "includes accessibility attributes" do
-      expect(ViewComponentCssDsl::HTML_ATTR_KEYS).to include(:aria, :role, :tabindex)
+      expect(ViewComponentCssDsl::HTML_ATTR_KEYS).to include(
+        :aria, :role, :tabindex
+      )
+    end
+  end
+
+  describe ".initialize_params_info" do
+    it "detects declared kwargs" do
+      component_class = Class.new(TestComponent) do
+        def initialize(foo:, bar: nil)
+        end
+      end
+
+      info = component_class.send(:initialize_params_info)
+
+      expect(info[:declared_kwargs]).to include(:foo, :bar)
+    end
+
+    it "detects **html_attrs keyrest" do
+      component_class = Class.new(TestComponent) do
+        def initialize(**html_attrs)
+        end
+      end
+
+      info = component_class.send(:initialize_params_info)
+
+      expect(info[:uses_html_attrs_keyrest]).to be true
+    end
+
+    it "detects no keyrest (nil name) as html_attrs pattern" do
+      component_class = Class.new(TestComponent) do
+        def initialize(foo:)
+        end
+      end
+
+      info = component_class.send(:initialize_params_info)
+
+      expect(info[:uses_html_attrs_keyrest]).to be true
+    end
+
+    it "detects **options as NOT html_attrs pattern" do
+      component_class = Class.new(TestComponent) do
+        def initialize(**options)
+        end
+      end
+
+      info = component_class.send(:initialize_params_info)
+
+      expect(info[:uses_html_attrs_keyrest]).to be false
+    end
+
+    it "detects **kwargs as NOT html_attrs pattern" do
+      component_class = Class.new(TestComponent) do
+        def initialize(**kwargs)
+        end
+      end
+
+      info = component_class.send(:initialize_params_info)
+
+      expect(info[:uses_html_attrs_keyrest]).to be false
+    end
+
+    it "caches result per class" do
+      component_class = Class.new(TestComponent) do
+        def initialize(foo:)
+        end
+      end
+
+      info1 = component_class.send(:initialize_params_info)
+      info2 = component_class.send(:initialize_params_info)
+
+      expect(info1).to be(info2) # Same object (cached)
+    end
+
+    it "caches independently for different subclasses" do
+      class_a = Class.new(TestComponent) do
+        def initialize(foo:)
+        end
+      end
+
+      class_b = Class.new(TestComponent) do
+        def initialize(bar:, **options)
+        end
+      end
+
+      info_a = class_a.send(:initialize_params_info)
+      info_b = class_b.send(:initialize_params_info)
+
+      expect(info_a[:declared_kwargs]).to include(:foo)
+      expect(info_a[:declared_kwargs]).not_to include(:bar)
+      expect(info_a[:uses_html_attrs_keyrest]).to be true
+
+      expect(info_b[:declared_kwargs]).to include(:bar)
+      expect(info_b[:declared_kwargs]).not_to include(:foo)
+      expect(info_b[:uses_html_attrs_keyrest]).to be false
+    end
+  end
+
+  describe "#final_data_attrs" do
+    let(:base_component) do
+      Class.new(TestComponent) do
+        def initialize(text:)
+          @text = text
+        end
+      end
+    end
+
+    let(:component_with_data_attrs) do
+      Class.new(TestComponent) do
+        def initialize(text:)
+          @text = text
+        end
+
+        def data_attrs
+          {controller: "component-ctrl", label: "Component label"}
+        end
+      end
+    end
+
+    it "concatenates controller values (component + caller)" do
+      component = component_with_data_attrs.new(
+        text: "Hello",
+        data: {controller: "caller-ctrl"}
+      )
+
+      result = component.send(:final_data_attrs)
+
+      expect(result[:controller]).to eq("component-ctrl caller-ctrl")
+    end
+
+    it "concatenates action values (component + caller)" do
+      component_with_action = Class.new(TestComponent) do
+        def initialize(text:)
+          @text = text
+        end
+
+        def data_attrs
+          {action: "click->foo#bar"}
+        end
+      end
+
+      component = component_with_action.new(
+        text: "Hello",
+        data: {action: "hover->baz#qux"}
+      )
+
+      result = component.send(:final_data_attrs)
+
+      expect(result[:action]).to eq("click->foo#bar hover->baz#qux")
+    end
+
+    it "overwrites non-merge keys (caller wins)" do
+      component = component_with_data_attrs.new(
+        text: "Hello",
+        data: {label: "Caller label"}
+      )
+
+      result = component.send(:final_data_attrs)
+
+      expect(result[:label]).to eq("Caller label")
+    end
+
+    it "preserves component values when caller provides no data" do
+      component = component_with_data_attrs.new(text: "Hello")
+
+      result = component.send(:final_data_attrs)
+
+      expect(result[:controller]).to eq("component-ctrl")
+      expect(result[:label]).to eq("Component label")
+    end
+
+    it "adds caller-only keys alongside component keys" do
+      component = component_with_data_attrs.new(
+        text: "Hello",
+        data: {new_key: "new value"}
+      )
+
+      result = component.send(:final_data_attrs)
+
+      expect(result[:new_key]).to eq("new value")
+      expect(result[:controller]).to eq("component-ctrl")
+    end
+
+    it "returns caller data as-is when component has no data_attrs" do
+      component = base_component.new(text: "Hello", data: {foo: "bar"})
+
+      result = component.send(:final_data_attrs)
+
+      expect(result).to eq({foo: "bar"})
+    end
+  end
+
+  describe "#final_aria_attrs" do
+    let(:component_with_aria) do
+      Class.new(TestComponent) do
+        def initialize(text:)
+          @text = text
+        end
+
+        def aria_attrs
+          {label: "Component label", describedby: "desc-id"}
+        end
+      end
+    end
+
+    it "caller values override component values" do
+      component = component_with_aria.new(
+        text: "Hello",
+        aria: {label: "Caller label"}
+      )
+
+      result = component.send(:final_aria_attrs)
+
+      expect(result[:label]).to eq("Caller label")
+    end
+
+    it "preserves non-conflicting component values" do
+      component = component_with_aria.new(
+        text: "Hello",
+        aria: {label: "Caller label"}
+      )
+
+      result = component.send(:final_aria_attrs)
+
+      expect(result[:describedby]).to eq("desc-id")
+    end
+
+    it "preserves component values when caller provides no aria" do
+      component = component_with_aria.new(text: "Hello")
+
+      result = component.send(:final_aria_attrs)
+
+      expect(result[:label]).to eq("Component label")
+      expect(result[:describedby]).to eq("desc-id")
+    end
+  end
+
+  describe "#html_attrs data/aria handling" do
+    let(:component_class) do
+      Class.new(TestComponent) do
+        def initialize(text:)
+          @text = text
+        end
+      end
+    end
+
+    it "excludes empty data hash to avoid overriding inline template attrs" do
+      component = component_class.new(text: "Hello", id: "my-id")
+
+      result = component.html_attrs
+
+      expect(result).not_to have_key(:data)
+      expect(result[:id]).to eq("my-id")
+    end
+
+    it "excludes empty aria hash to avoid overriding inline template attrs" do
+      component = component_class.new(text: "Hello", id: "my-id")
+
+      result = component.html_attrs
+
+      expect(result).not_to have_key(:aria)
+    end
+
+    it "includes data when present" do
+      component = component_class.new(text: "Hello", data: {foo: "bar"})
+
+      result = component.html_attrs
+
+      expect(result[:data]).to eq({foo: "bar"})
+    end
+
+    it "includes aria when present" do
+      component = component_class.new(text: "Hello", aria: {label: "My label"})
+
+      result = component.html_attrs
+
+      expect(result[:aria]).to eq({label: "My label"})
     end
   end
 
