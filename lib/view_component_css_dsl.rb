@@ -12,11 +12,6 @@ require_relative "view_component_css_dsl/version"
 module ViewComponentCssDsl
   extend ActiveSupport::Concern
 
-  # HTML attributes auto-extracted from kwargs at construction time. Anything in
-  # this set is captured into @html_attrs instead of being passed to initialize,
-  # so callers can pass `class:`, `data:`, `aria:`, etc. without the component
-  # declaring them. To opt out, accept a kwarg with the same name in initialize
-  # (e.g. `def initialize(class:)`) or use a keyrest name other than html_attrs.
   HTML_ATTR_KEYS = Set[
     :alt, :aria, :autofocus,
     :class, :colspan, :contenteditable,
@@ -206,20 +201,60 @@ module ViewComponentCssDsl
     # Override `new` to auto-extract HTML attributes from kwargs into @html_attrs,
     # so components don't need to declare **html_attrs in their initialize signature.
     # Anything in HTML_ATTR_KEYS that wasn't declared as a kwarg is captured.
+    #
+    # These can then be referenced in the component's template as `html_attrs`.
+    #
+    # Why?
+    # - DX: All components can accept arbitrary html attrs for free. Dev can pass
+    #   arbitrary html attrs in at any caller and have it output at the component's
+    #   top-level element.
+    # - Removes boilerplate of putting `**html_attrs` as the last argument in every
+    #   single component's initialize signature, and then having to set the same as an
+    #   ivar within the initialize body.
+    # - Requires following a pattern of declaring `**html_attrs` in the top level
+    #   element of every single component's template.
+    # - Example template definition:
+    #
+    #     # html_attrs contains :class, :data, etc defined either in the component
+    #     # or passed in by the caller.
+    #     <%= tag.my_component **html_attrs do %>
+    #       <%= content %>
+    #     <% end %>
+    #
+    # Example caller:
+    #
+    #   render MyComponent.new(text: "Hello", class: "custom", data: {foo: "bar"})
+    #
+    # - :text goes to component's #initialize method, as normal
+    # - :class, :data, etc are captured and merged into @html_attrs automatically
+    # - The component's initialize method will look like:
+    #
+    #     def initialize(text)
+    #       @text = text
+    #     end
+    #
+    # To opt out of this behavior, inherit from ViewComponent::Base directly instead of
+    # ApplicationComponent.
+    #
     def new(*args, **kwargs, &block)
       info = initialize_params_info
       html_attrs = {}
+
+      # Only extract HTML attrs if the component uses **html_attrs pattern.
+      # Components with other keyrest names (like **options) should receive all kwargs.
       if info[:uses_html_attrs_keyrest]
+        # Extract HTML attrs, but NOT if they're declared component params
         extractable = HTML_ATTR_KEYS.intersection(kwargs.keys) - info[:declared_kwargs]
         html_attrs = kwargs.extract!(*extractable)
       end
 
       instance = allocate
+      # Set @html_attrs BEFORE initialize so components can access it there
       instance.instance_variable_set(:@html_attrs, html_attrs)
       instance.send(:initialize, *args, **kwargs, &block)
 
-      # Merge with any @html_attrs the component set inside initialize (older
-      # components that still declare **html_attrs). Caller-provided values win.
+      # Merge with any @html_attrs set by initialize (old pattern components).
+      # Caller-provided values (html_attrs) take precedence over component defaults.
       existing = instance.instance_variable_get(:@html_attrs) || {}
       instance.instance_variable_set(:@html_attrs, existing.merge(html_attrs))
       instance
@@ -234,12 +269,17 @@ module ViewComponentCssDsl
         keyrest_name = nil
         instance_method(:initialize).parameters.each do |type, name|
           case type
-          when :key, :keyreq then declared_kwargs << name
-          when :keyrest then keyrest_name = name
+          when :key, :keyreq
+            declared_kwargs << name
+          when :keyrest
+            keyrest_name = name
           end
         end
-        uses_html_attrs_keyrest = keyrest_name.nil? || keyrest_name == :html_attrs
-        {declared_kwargs:, uses_html_attrs_keyrest:}
+
+        {
+          declared_kwargs:,
+          uses_html_attrs_keyrest: keyrest_name == :html_attrs || keyrest_name.nil?
+        }
       end
     end
 
