@@ -3,6 +3,15 @@ name: Release gem to RubyGems.org
 on:
   workflow_dispatch:
 
+# The called workflow needs these permissions to publish via Trusted
+# Publishing, push tags, and open the post-release version-bump PR.
+# Required because this repo's default workflow permissions don't
+# grant them automatically.
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
 jobs:
   release:
     uses: SOFware/reissue/.github/workflows/shared-ruby-gem-release.yml@main
