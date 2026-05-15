@@ -47,6 +47,10 @@ class ButtonComponent < ViewComponent::Base
     when :danger  then "bg-red-500 text-white"
     end
   end
+
+  def data_attrs
+    {variant: @variant, controller: "button-component"}
+  end
 end
 ```
 
@@ -59,6 +63,8 @@ class ButtonComponent < ApplicationComponent
   css variant: :danger,  style: "bg-red-500 text-white"
   css :disabled?,        style: "opacity-50"
 
+  data variant: :variant, controller: "button-component"
+
   def initialize(variant: :primary, disabled: false)
     @variant = variant
     @disabled = disabled
@@ -66,6 +72,7 @@ class ButtonComponent < ApplicationComponent
 
   private
 
+  attr_reader :variant
   def disabled? = @disabled
 end
 ```
@@ -73,6 +80,7 @@ end
 - Variant validation is automatic; passing `:unknown` raises an `ArgumentError`.
 - Declarations are easy to scan, easy to extend.
 - A caller's `class: "..."` is smart-merged with the component's defaults: `bg-black` from the caller wins over the component's `bg-blue-500`, but `rounded` and `px-4` stick.
+- Data attributes get the same declarative treatment — see [Declaring data, aria, and HTML attributes](#declaring-data-aria-and-html-attributes) below for the full pattern.
 
 ## Philosophy
 
