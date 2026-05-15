@@ -327,6 +327,8 @@ bundle exec rspec
 bundle exec standardrb
 ```
 
+Releases are managed by [reissue](https://github.com/SOFware/reissue). When committing, add Keep-a-Changelog trailers (`Added:`, `Changed:`, `Fixed:`, etc.) and reissue will collate them into `CHANGELOG.md` at release time. To publish a new version, run the "Release gem to RubyGems.org" workflow from GitHub Actions.
+
 ## License
 
 MIT. See [LICENSE.txt](LICENSE.txt).
