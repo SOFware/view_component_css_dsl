@@ -137,3 +137,19 @@ Defaulting to `div` when no tag is given. Open question whether there are real c
 - Prior art: Phlex, ViewComponentContrib.
 - Prototype syntax options on real Forge components with non-trivial conditional logic.
 - Benchmark proc-based vs method-based if proc looks viable.
+
+## 3. Lightweight in-template styling for sub-elements
+
+The DSL's discipline today is: top-level element gets `css` declarations; sub-elements that need dynamic styling get promoted to their own ViewComponent. Clean, but can feel out of proportion to the change — especially for "tweener" sub-elements that only react to a single boolean from the parent. Real example: `PerceptionCommentButton` has sub-elements whose CSS is dynamic but trivially derived from parent state; not complex enough to warrant a sub-component, but no DSL-shaped path to express it inline.
+
+Possible directions worth exploring:
+
+- **In-line declarative methods** — class-level declarations the template can call to get a merged class string for a sub-element.
+- **DSL extension** like `sub_css :icon, base: "...", variant: {primary: "..."}` returning a merged string.
+- **"Inline slot"** — render as a slot without the ceremony of a separate ViewComponent file.
+
+Tension: any of these can scope-creep into a parallel mini-DSL and undermine the discipline that real components are the unit of composition.
+
+Counterpoint to itself: maybe that discipline IS the point, and the right answer is better extraction tooling/guidance rather than making it easier to avoid extraction.
+
+Research goal: find the smallest pattern that handles the "trivial sub-element reacting to a single parent prop" case without enabling sprawl. Or conclude there isn't one and lean in.
