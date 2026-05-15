@@ -1,5 +1,7 @@
 # view_component_css_dsl
 
+[![CI](https://github.com/SOFware/view_component_css_dsl/actions/workflows/ci.yml/badge.svg)](https://github.com/SOFware/view_component_css_dsl/actions/workflows/ci.yml)
+
 A declarative DSL for styling [ViewComponent](https://viewcomponent.org/) components with [Tailwind CSS](https://tailwindcss.com/).
 
 ```ruby
