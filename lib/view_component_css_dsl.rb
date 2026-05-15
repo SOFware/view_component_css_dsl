@@ -133,6 +133,10 @@ module ViewComponentCssDsl
     class_attribute :_css_cache, instance_writer: false, default: nil
     # Memoization cache for smart_merge results (axis + method + proc combinations)
     class_attribute :_css_merge_cache, instance_writer: false, default: nil
+    # Rules for the data/aria/attribute DSLs. Each entry: {predicate:, attrs:}
+    class_attribute :_data_rules, instance_writer: false, default: []
+    class_attribute :_aria_rules, instance_writer: false, default: []
+    class_attribute :_attribute_rules, instance_writer: false, default: []
   end
 
   class_methods do
@@ -197,6 +201,60 @@ module ViewComponentCssDsl
         raise ArgumentError, "Unknown css argument type: #{args.first.class}"
       end
     end
+
+    # Declares one or more `data-*` attributes on the top-level element.
+    #
+    #   data controller: "modal"                      # static
+    #   data variant: :variant                        # Symbol value -> calls instance method
+    #   data foo: -> { computed_value }               # Proc value -> instance_exec'd
+    #   data :auto_dismiss?, timeout_value: "5000"    # Symbol predicate
+    #   data -> { complex_check? }, foo: "bar"        # Proc predicate
+    def data(*args, **kwargs)
+      self._data_rules = _data_rules.dup
+      _data_rules << _build_attr_rule(:data, *args, **kwargs)
+    end
+
+    # Declares one or more `aria-*` attributes on the top-level element.
+    # See `data` for the full pattern.
+    def aria(*args, **kwargs)
+      self._aria_rules = _aria_rules.dup
+      _aria_rules << _build_attr_rule(:aria, *args, **kwargs)
+    end
+
+    # Declares one or more top-level HTML attributes (`target`, `role`, `tabindex`,
+    # etc.) on the rendered element. See `data` for the full pattern.
+    def attribute(*args, **kwargs)
+      self._attribute_rules = _attribute_rules.dup
+      _attribute_rules << _build_attr_rule(:attribute, *args, **kwargs)
+    end
+
+    private
+
+    # Builds the rule entry used by `data`, `aria`, and `attribute`.
+    # Returns {predicate:, attrs:} where predicate is nil, Symbol, or Proc and
+    # attrs is the hash of attribute key -> (literal | Symbol | Proc).
+    def _build_attr_rule(namespace, *args, **kwargs)
+      if args.size > 1
+        raise ArgumentError,
+          "#{namespace} accepts at most one positional arg (a predicate Symbol or Proc)"
+      end
+
+      predicate = args.first
+      if predicate && !predicate.is_a?(Symbol) && !predicate.is_a?(Proc)
+        raise ArgumentError,
+          "#{namespace} positional predicate must be a Symbol or Proc " \
+          "(got #{predicate.class})"
+      end
+
+      if kwargs.empty?
+        raise ArgumentError,
+          "#{namespace} requires at least one attribute kwarg"
+      end
+
+      {predicate:, attrs: kwargs}
+    end
+
+    public
 
     # Override `new` to auto-extract HTML attributes from kwargs into @html_attrs,
     # so components don't need to declare **html_attrs in their initialize signature.
@@ -401,7 +459,10 @@ module ViewComponentCssDsl
   def html_attrs
     return {} unless @html_attrs
 
-    result = @html_attrs.except(:aria, :class, :data)
+    # Start with DSL-declared top-level attrs; caller's html_attrs layer on top
+    # (caller wins on collision, mirroring the css behavior).
+    dsl_attrs = resolved_attr_rules(:attribute)
+    result = dsl_attrs.merge(@html_attrs.except(:aria, :class, :data))
 
     # Only include aria/data if they have content, otherwise they'd override
     # inline attrs in templates like: tag.div data: {foo: "bar"}, **html_attrs
@@ -462,16 +523,11 @@ module ViewComponentCssDsl
   # - In contrast, data-label from the caller overwrites the default
   #
   def final_data_attrs
-    incoming_data = @html_attrs.fetch(:data, {})
-    incoming_data.each_with_object(data_attrs) do |(key, value), final_data|
-      final_value = if key.in?(DATA_MERGE_KEYS)
-        [data_attrs[key], value].compact.join(" ")
-      else
-        value
-      end
-
-      final_data[key] = final_value
-    end
+    # Merge in order: DSL declarations -> method override -> caller's :data.
+    # Each layer uses DATA_MERGE_KEYS semantics (controller/action concatenate,
+    # everything else replaces).
+    combined = merge_data_layer(resolved_attr_rules(:data), data_attrs)
+    merge_data_layer(combined, @html_attrs.fetch(:data, {}))
   end
 
   # Overwrite in subclass to define default aria-attrs
@@ -479,13 +535,74 @@ module ViewComponentCssDsl
     {}
   end
 
-  # Using merge allows for default value #aria_attrs, but also for dev to override
-  # that value per-instance as needed
+  # Merge in order: DSL declarations -> method override -> caller's :aria.
+  # Hash#merge throughout — caller wins on collision (no additive semantics).
   def final_aria_attrs
-    aria_attrs.merge(@html_attrs.fetch(:aria, {}))
+    resolved_attr_rules(:aria).merge(aria_attrs).merge(@html_attrs.fetch(:aria, {}))
   end
 
   private
+
+  # Walks the DSL rules for the given namespace (:data, :aria, :attribute),
+  # evaluates each predicate, resolves each value, and returns a hash. For
+  # the :data namespace, DATA_MERGE_KEYS keys accumulate space-separated when
+  # the same key appears in multiple included rules.
+  def resolved_attr_rules(namespace)
+    rules = case namespace
+    when :data then self.class._data_rules
+    when :aria then self.class._aria_rules
+    when :attribute then self.class._attribute_rules
+    end
+
+    rules.each_with_object({}) do |rule, result|
+      next unless predicate_met?(rule[:predicate])
+
+      rule[:attrs].each do |key, value|
+        resolved = resolve_attr_value(value)
+        next if resolved.nil?
+
+        result[key] = if namespace == :data && DATA_MERGE_KEYS.include?(key) && result.key?(key)
+          "#{result[key]} #{resolved}"
+        else
+          resolved
+        end
+      end
+    end
+  end
+
+  # Layers `addition` on top of `base` using DATA_MERGE_KEYS semantics: keys
+  # in DATA_MERGE_KEYS concatenate space-separated, every other key replaces.
+  def merge_data_layer(base, addition)
+    addition.each_with_object(base.dup) do |(key, value), result|
+      result[key] = if DATA_MERGE_KEYS.include?(key)
+        [result[key], value].compact.join(" ")
+      else
+        value
+      end
+    end
+  end
+
+  # Resolves a predicate. nil predicate -> always true. Symbol -> call instance
+  # method. Proc -> instance_exec.
+  def predicate_met?(predicate)
+    case predicate
+    when nil then true
+    when Symbol then send(predicate)
+    when Proc then instance_exec(&predicate)
+    end
+  end
+
+  # Resolves a value for a DSL-declared attribute. Symbols become method calls
+  # on the instance; Procs are instance_exec'd; literals pass through. Result
+  # is stringified unless nil (which drops the attribute).
+  def resolve_attr_value(value)
+    resolved = case value
+    when Symbol then send(value)
+    when Proc then instance_exec(&value)
+    else value
+    end
+    resolved&.to_s
+  end
 
   def build_classes
     validate_axes!

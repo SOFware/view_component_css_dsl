@@ -237,6 +237,124 @@ css -> { "pl-#{@indent * 4}" }
 
 Procs returning `nil` are dropped. Procs participate in smart_merge.
 
+## Declaring `data`, `aria`, and HTML attributes
+
+The gem provides three sibling declarators that mirror `css`'s shape: `data`, `aria`, and `attribute`. Use them to declare attributes alongside your styles instead of overriding methods.
+
+```ruby
+class ButtonComponent < ApplicationComponent
+  css "rounded px-4 py-2 bg-blue-500 text-white"
+
+  data variant: :variant, size: :size
+  aria label: "Submit"
+  attribute target: "_blank"
+
+  def initialize(variant: :primary, size: :default)
+    @variant = variant
+    @size = size
+  end
+
+  attr_reader :variant, :size
+end
+```
+
+All three declarators share the same patterns. The only difference is *where* the attribute lands in the rendered HTML — `data` produces `data-*`, `aria` produces `aria-*`, and `attribute` produces a top-level attribute.
+
+### Static values
+
+Always emitted. Stringified at render time (booleans, integers, etc. all become strings; `nil` drops the attribute).
+
+```ruby
+data controller: "modal"
+aria label: "Close dialog"
+attribute target: "_blank"
+```
+
+### Symbol values — call an instance method
+
+When the value is a Symbol, the DSL calls that instance method at render time and uses the result. Standard pattern for streaming an ivar or computed value into a data attribute.
+
+```ruby
+data variant: :variant       # calls #variant; renders as data-variant="<value>"
+attribute tabindex: :tab_index
+
+def tab_index
+  focusable? ? 0 : -1
+end
+```
+
+If the method returns `nil`, the attribute is dropped.
+
+### Proc values — inline computation
+
+For one-off computed values that don't deserve a named method:
+
+```ruby
+aria label: -> { "#{@variant} Notification".titleize }
+data turbo_permanent: -> { true if turbo_permanent? }
+```
+
+Procs are `instance_exec`'d at render time, so they see instance state. Procs returning `nil` drop the attribute.
+
+### Conditional inclusion via positional predicate
+
+Mirrors the `css :method?, style: "..."` pattern — a positional Symbol or Proc as the first argument acts as a predicate. When truthy, the declaration applies; when falsy, it's skipped entirely.
+
+```ruby
+data :auto_dismiss?, timeout: "5000", animation: "fade"
+aria :loud?, label: "Important"
+attribute -> { @disabled }, disabled: true
+```
+
+The Symbol form calls the named instance method; the Proc form is `instance_exec`'d.
+
+### Multiple attributes per declaration
+
+Each declaration accepts a hash of attributes. All share the same predicate (if any).
+
+```ruby
+data controller: "modal",
+     modal_dismiss_action: "click->modal#dismiss"
+```
+
+### Multiple declarations: how they compose
+
+For `aria` and `attribute`, repeated keys across declarations *replace* — the last declaration wins.
+
+For `data`, **the keys `:controller` and `:action` accumulate** (they're space-separated lists in HTML), and everything else replaces. This matches how the gem already merges component defaults with caller-passed values.
+
+```ruby
+data :modal?,        controller: "modal"
+data :trap_focus?,   controller: "trap-focus"
+# Both predicates true → data-controller="modal trap-focus"
+# Only :modal? true   → data-controller="modal"
+# Neither true        → data-controller attribute is omitted
+```
+
+### Caller customization
+
+Whatever a caller passes for `class:`, `data:`, `aria:`, or any HTML attribute layers on top of your declarations using the same rules:
+
+- `class:` smart-merged (see Smart merge behavior below)
+- `data:` controller/action keys concatenate, others replace
+- `aria:` and other attrs: caller wins
+
+### Inheritance
+
+Subclass declarations stack on top of parent declarations using the same rules. `data controller:` declarations in a child class concatenate with the parent's; `data role:` in a child class replaces the parent's. `aria` and `attribute` keys in a child class replace the parent's.
+
+```ruby
+class CardComponent < ApplicationComponent
+  data controller: "card"
+  data role: "region"
+end
+
+class HighlightedCardComponent < CardComponent
+  data controller: "highlighted"   # appends → data-controller="card highlighted"
+  data role: "alert"                # replaces → data-role="alert"
+end
+```
+
 ## Caller customization
 
 Callers can pass `class:` (smart-merged with the component's defaults), plus any other HTML attribute (`data:`, `id:`, `aria:`, etc.) — they all land on the top-level element without the component having to opt each one in.

@@ -1204,4 +1204,358 @@ RSpec.describe ViewComponentCssDsl do
       end
     end
   end
+
+  describe "data DSL" do
+    context "static values" do
+      let(:component_class) do
+        Class.new(TestComponent) do
+          data controller: "remove-element"
+          data animation: "fade"
+        end
+      end
+
+      it "renders all declared data attrs" do
+        component = component_class.new
+        expect(component.html_attrs[:data]).to eq(
+          controller: "remove-element",
+          animation: "fade"
+        )
+      end
+
+      it "stringifies non-string literals" do
+        klass = Class.new(TestComponent) do
+          data count: 5
+          data flag: false
+        end
+        expect(klass.new.html_attrs[:data]).to eq(count: "5", flag: "false")
+      end
+    end
+
+    context "Symbol value (instance method reference)" do
+      let(:component_class) do
+        Class.new(TestComponent) do
+          data variant: :variant
+
+          def initialize(variant: :primary)
+            @variant = variant
+          end
+
+          attr_reader :variant
+        end
+      end
+
+      it "calls the method at render time and uses the result" do
+        component = component_class.new(variant: :danger)
+        expect(component.html_attrs[:data]).to eq(variant: "danger")
+      end
+    end
+
+    context "Proc value" do
+      let(:component_class) do
+        Class.new(TestComponent) do
+          data computed: -> { @factor * 2 }
+
+          def initialize(factor:)
+            @factor = factor
+          end
+        end
+      end
+
+      it "evaluates the proc in the instance context" do
+        expect(component_class.new(factor: 7).html_attrs[:data]).to eq(computed: "14")
+      end
+
+      it "drops the attr when proc returns nil" do
+        klass = Class.new(TestComponent) do
+          data foo: -> {}
+          data bar: "kept"
+        end
+        expect(klass.new.html_attrs[:data]).to eq(bar: "kept")
+      end
+    end
+
+    context "Symbol predicate (positional)" do
+      let(:component_class) do
+        Class.new(TestComponent) do
+          data :enabled?, controller: "tabs"
+          data :enabled?, timeout: "5000"
+          data always: "yes"
+
+          def initialize(enabled: true)
+            @enabled = enabled
+          end
+
+          def enabled?
+            @enabled
+          end
+        end
+      end
+
+      it "includes attrs when predicate returns truthy" do
+        component = component_class.new(enabled: true)
+        expect(component.html_attrs[:data]).to eq(
+          controller: "tabs",
+          timeout: "5000",
+          always: "yes"
+        )
+      end
+
+      it "excludes attrs when predicate returns falsy" do
+        component = component_class.new(enabled: false)
+        expect(component.html_attrs[:data]).to eq(always: "yes")
+      end
+    end
+
+    context "Proc predicate (positional)" do
+      let(:component_class) do
+        Class.new(TestComponent) do
+          data -> { @count > 5 }, badge: "high"
+          data always: "yes"
+
+          def initialize(count:)
+            @count = count
+          end
+        end
+      end
+
+      it "evaluates the proc to decide inclusion" do
+        expect(component_class.new(count: 10).html_attrs[:data])
+          .to eq(badge: "high", always: "yes")
+        expect(component_class.new(count: 1).html_attrs[:data])
+          .to eq(always: "yes")
+      end
+    end
+
+    context "DATA_MERGE_KEYS additive across multiple declarations" do
+      let(:component_class) do
+        Class.new(TestComponent) do
+          data controller: "foo", if_a: :a?
+          data controller: "bar", if_b: :b?
+          # NOTE: predicates above use `if_a:`/`if_b:` as data attr names
+          # — the actual predicates come from the positional below
+        end
+      end
+
+      it "concatenates controller values from multiple included rules" do
+        klass = Class.new(TestComponent) do
+          data :a?, controller: "foo"
+          data :b?, controller: "bar"
+
+          def initialize(a: false, b: false)
+            @a = a
+            @b = b
+          end
+
+          def a? = @a
+          def b? = @b
+        end
+
+        expect(klass.new(a: true, b: false).html_attrs[:data]).to eq(controller: "foo")
+        expect(klass.new(a: false, b: true).html_attrs[:data]).to eq(controller: "bar")
+        expect(klass.new(a: true, b: true).html_attrs[:data])
+          .to eq(controller: "foo bar")
+        expect(klass.new(a: false, b: false).html_attrs).not_to have_key(:data)
+      end
+    end
+
+    context "non-merge keys replace across multiple declarations" do
+      let(:component_class) do
+        Class.new(TestComponent) do
+          data role: "region"
+          data role: "alert"
+        end
+      end
+
+      it "uses the last declaration's value" do
+        expect(component_class.new.html_attrs[:data]).to eq(role: "alert")
+      end
+    end
+
+    context "interaction with caller's :data" do
+      let(:component_class) do
+        Class.new(TestComponent) do
+          data controller: "form"
+          data role: "form-region"
+        end
+      end
+
+      it "caller's data adds to controller (DATA_MERGE_KEYS) and replaces role" do
+        component = component_class.new(
+          data: {controller: "extra", role: "alert"}
+        )
+        expect(component.html_attrs[:data]).to eq(
+          controller: "form extra",
+          role: "alert"
+        )
+      end
+    end
+
+    context "coexistence with `def data_attrs` method override" do
+      it "DSL declarations and method override compose" do
+        klass = Class.new(TestComponent) do
+          data controller: "from-dsl"
+          data role: "from-dsl"
+
+          def data_attrs
+            {controller: "from-method", id: "from-method"}
+          end
+        end
+        # controller is in DATA_MERGE_KEYS so it concatenates
+        # role isn't, so method override wins
+        # id is method-only
+        expect(klass.new.html_attrs[:data]).to eq(
+          controller: "from-dsl from-method",
+          role: "from-dsl",
+          id: "from-method"
+        )
+      end
+    end
+  end
+
+  describe "aria DSL" do
+    it "renders declared aria attrs" do
+      klass = Class.new(TestComponent) do
+        aria label: "Submit"
+        aria role: "button"
+      end
+      expect(klass.new.html_attrs[:aria]).to eq(label: "Submit", role: "button")
+    end
+
+    it "uses Hash#merge (no additive semantics) for repeated keys" do
+      klass = Class.new(TestComponent) do
+        aria label: "first"
+        aria label: "second"
+      end
+      expect(klass.new.html_attrs[:aria]).to eq(label: "second")
+    end
+
+    it "caller's aria wins over DSL" do
+      klass = Class.new(TestComponent) do
+        aria label: "from-dsl"
+      end
+      component = klass.new(aria: {label: "from-caller"})
+      expect(component.html_attrs[:aria]).to eq(label: "from-caller")
+    end
+
+    it "honors predicates" do
+      klass = Class.new(TestComponent) do
+        aria :loud?, label: "Important"
+
+        def initialize(loud: false)
+          @loud = loud
+        end
+
+        def loud?
+          @loud
+        end
+      end
+      expect(klass.new(loud: true).html_attrs[:aria]).to eq(label: "Important")
+      expect(klass.new(loud: false).html_attrs).not_to have_key(:aria)
+    end
+  end
+
+  describe "attribute DSL" do
+    it "renders top-level HTML attrs (not nested under data/aria)" do
+      klass = Class.new(TestComponent) do
+        attribute target: "_blank"
+        attribute role: "button"
+      end
+      result = klass.new.html_attrs
+      expect(result[:target]).to eq("_blank")
+      expect(result[:role]).to eq("button")
+      expect(result).not_to have_key(:data)
+    end
+
+    it "caller's html_attrs override DSL declarations" do
+      klass = Class.new(TestComponent) do
+        attribute target: "_blank"
+      end
+      expect(klass.new(target: "_self").html_attrs[:target]).to eq("_self")
+    end
+
+    it "honors Symbol value (method reference)" do
+      klass = Class.new(TestComponent) do
+        attribute tabindex: :tab_value
+
+        def tab_value
+          5
+        end
+      end
+      expect(klass.new.html_attrs[:tabindex]).to eq("5")
+    end
+  end
+
+  describe "DSL inheritance" do
+    let(:parent_class) do
+      Class.new(TestComponent) do
+        data controller: "card"
+        data role: "region"
+        aria label: "Parent"
+      end
+    end
+
+    it "subclass inherits parent's declarations" do
+      child = Class.new(parent_class)
+      result = child.new.html_attrs
+      expect(result[:data]).to eq(controller: "card", role: "region")
+      expect(result[:aria]).to eq(label: "Parent")
+    end
+
+    it "subclass extends DATA_MERGE_KEYS additively" do
+      child = Class.new(parent_class) do
+        data controller: "highlighted"
+      end
+      expect(child.new.html_attrs[:data][:controller]).to eq("card highlighted")
+    end
+
+    it "subclass replaces non-merge keys" do
+      child = Class.new(parent_class) do
+        data role: "alert"
+      end
+      expect(child.new.html_attrs[:data][:role]).to eq("alert")
+    end
+
+    it "subclass aria replaces parent aria (no additive)" do
+      child = Class.new(parent_class) do
+        aria label: "Child"
+      end
+      expect(child.new.html_attrs[:aria]).to eq(label: "Child")
+    end
+
+    it "does not mutate parent's rules when subclass adds declarations" do
+      Class.new(parent_class) do
+        data controller: "highlighted"
+      end
+      expect(parent_class.new.html_attrs[:data]).to eq(
+        controller: "card",
+        role: "region"
+      )
+    end
+  end
+
+  describe "DSL argument validation" do
+    it "raises when too many positional args" do
+      expect {
+        Class.new(TestComponent) do
+          data :a?, :b?, foo: "x"
+        end
+      }.to raise_error(ArgumentError, /at most one positional/)
+    end
+
+    it "raises when positional arg is not a Symbol or Proc" do
+      expect {
+        Class.new(TestComponent) do
+          data "not a symbol", foo: "x"
+        end
+      }.to raise_error(ArgumentError, /must be a Symbol or Proc/)
+    end
+
+    it "raises when no attribute kwargs are given" do
+      expect {
+        Class.new(TestComponent) do
+          data :predicate?
+        end
+      }.to raise_error(ArgumentError, /requires at least one attribute kwarg/)
+    end
+  end
 end
