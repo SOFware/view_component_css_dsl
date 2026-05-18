@@ -6,11 +6,16 @@ require "active_support/core_ext/object/blank"
 require "active_support/core_ext/hash/except"
 require "active_support/core_ext/hash/slice"
 require "active_support/core_ext/object/inclusion"
+require "tailwind_merge"
 
 require_relative "view_component_css_dsl/version"
 
 module ViewComponentCssDsl
   extend ActiveSupport::Concern
+
+  # Single shared merger. tailwind_merge builds a conflict-group index on
+  # initialization, so we pay that cost once per process rather than per call.
+  MERGER = TailwindMerge::Merger.new
 
   HTML_ATTR_KEYS = Set[
     :alt, :aria, :autofocus,
@@ -27,97 +32,6 @@ module ViewComponentCssDsl
     :readonly, :rel, :role, :rowspan,
     :spellcheck, :src, :srcset, :style,
     :tabindex, :target, :title, :type, :value
-  ].freeze
-
-  # Single combined regex for padding/margin spacing (replaces 14 separate patterns)
-  # Captures: type (p/m), axis (x/y/t/r/b/l or nil for all), value
-  SPACING_REGEX = /\b(p|m)(x|y|t|r|b|l)?-(\d+)\b/
-
-  # Maps axis character to Set of affected sides
-  SPACING_AXIS_MAP = {
-    nil => Set[:t, :r, :b, :l],  # p-4, m-4 = all sides
-    "x" => Set[:l, :r],
-    "y" => Set[:t, :b],
-    "t" => Set[:t],
-    "r" => Set[:r],
-    "b" => Set[:b],
-    "l" => Set[:l]
-  }.freeze
-
-  # Border width patterns (kept separate due to anchoring requirements)
-  BORDER_REGEX = /^border(?:-(x|y|t|r|b|l))?(?:-\d+)?$/
-
-  # Other category patterns (non-spacing, simple override by category)
-  # IMPORTANT: Use anchored patterns (^/$) to avoid matching substrings within
-  # compound classes (e.g., `h-8` within `min-h-8`, `flex` within `inline-flex`)
-  CATEGORIES = {
-    background: /^bg-/,
-    text_color: /^text-((\w+-\d+)|white|black|transparent|current|inherit|action|success|danger|warning|brand)(\/\d+)?$/,
-    text_size: /^text-(xs|sm|base|lg|xl|\d*xl)$/,
-    border_color: /^border-(?!t|r|b|l|x|y|\d)(\w+-\d+|\w+)(\/\d+)?$/,
-    width: /^w-/,
-    height: /^h-/,
-    min_width: /^min-w-/,
-    min_height: /^min-h-/,
-    max_width: /^max-w-/,
-    max_height: /^max-h-/,
-    # Display classes - note: `hidden` is intentionally excluded because it's
-    # commonly used as a visibility toggle alongside other display classes
-    # (e.g., "inline-flex hidden" where JS removes "hidden" to show element)
-    display: /^(block|inline-block|inline-flex|inline-grid|inline|flex|grid|table-cell|table-row|table|contents|flow-root|list-item)$/,
-    justify: /^justify-/,
-    align: /^items-/,
-    font_weight: /^font-(thin|extralight|light|normal|medium|semibold|bold|extrabold|black)$/,
-    rounded: /^rounded(-none|-sm|-md|-lg|-xl|-2xl|-3xl|-full)?$/,
-    position: /^(static|relative|absolute|fixed|sticky)$/
-  }.freeze
-
-  # Known Tailwind modifiers (prefixes like hover:, md:, first:, etc.)
-  # Classes with different modifiers should NOT conflict with each other
-  KNOWN_MODIFIERS = Set[
-    # Responsive
-    "sm", "md", "lg", "xl", "2xl",
-    "max-sm", "max-md", "max-lg", "max-xl", "max-2xl",
-    # Interactive state
-    "hover", "focus", "focus-within", "focus-visible", "active", "visited", "target",
-    # Structural
-    "first", "last", "only", "odd", "even",
-    "first-of-type", "last-of-type", "only-of-type", "empty",
-    # Form state
-    "disabled", "enabled", "checked", "indeterminate", "default",
-    "required", "valid", "invalid", "in-range", "out-of-range",
-    "placeholder-shown", "autofill", "read-only",
-    # Pseudo-elements
-    "before", "after", "first-letter", "first-line",
-    "marker", "selection", "file", "backdrop", "placeholder",
-    # Media/Preference
-    "dark", "print", "portrait", "landscape",
-    "motion-safe", "motion-reduce", "contrast-more", "contrast-less",
-    "forced-colors",
-    # Direction
-    "rtl", "ltr",
-    # Attribute
-    "open",
-    # Direct children
-    "*"
-  ].freeze
-
-  # Patterns that match dynamic modifiers (with optional names/arbitrary values)
-  # These use flexible regex to match ANY valid Tailwind modifier syntax
-  MODIFIER_PATTERNS = [
-    /^group(?:\/\w+)?$/,                    # group, group/<any-name>
-    /^group-\w+(?:\/\w+)?$/,                # group-hover, group-<state>/<any-name>
-    /^peer(?:\/\w+)?$/,                     # peer, peer/<any-name>
-    /^peer-\w+(?:\/\w+)?$/,                 # peer-checked, peer-<state>/<any-name>
-    /^aria-\w+$/,                           # aria-checked, aria-<any-attr>
-    /^aria-\[.+\]$/,                        # aria-[<arbitrary>]
-    /^data-\[.+\]$/,                        # data-[<arbitrary>]
-    /^supports-\[.+\]$/,                    # supports-[<arbitrary>]
-    /^has-\[.+\]$/,                         # has-[<arbitrary>]
-    /^group-has-\[.+\]$/,                   # group-has-[<arbitrary>]
-    /^peer-has-\[.+\]$/,                    # peer-has-[<arbitrary>]
-    /^min-\[.+\]$/,                         # min-[<arbitrary>]
-    /^max-\[.+\]$/                          # max-[<arbitrary>]
   ].freeze
 
   included do
@@ -341,99 +255,20 @@ module ViewComponentCssDsl
       end
     end
 
-    # Overwrites base css with custom css from the caller, but only if they actually
-    # interfere with each other. Modifier prefixes (hover:, md:, first:, etc.) create
-    # separate "namespaces" so they don't conflict with base classes.
+    # Merges Tailwind utility classes, resolving conflicts so the last-declared
+    # value wins. Delegates to the `tailwind_merge` gem, which mirrors
+    # tailwind-merge (JS) semantics and tracks Tailwind utility groups upstream.
+    #
     # Examples:
     # - base: "pt-2", custom: "pt-4", result => "pt-4"
     # - base: "pb-2", custom: "pt-4", result => "pb-2 pt-4"
     # - base: "pb-2", custom: "p-4", result => "p-4"
     # - base: "block", custom: "first:hidden", result => "block first:hidden"
     def smart_merge(*css_strings)
-      categorized = {}
-      uncategorized = []
-      # Store spacing classes grouped by modifier prefix
-      # {prefix => [{class: "p-4", info: {type: :padding, axes: Set[:t,:r,:b,:l]}}, ...]}
-      spacing_by_prefix = Hash.new { |h, k| h[k] = [] }
+      input = css_strings.flat_map { |s| s.to_s.split }.reject(&:empty?).join(" ")
+      return "" if input.empty?
 
-      css_strings.compact.each do |str|
-        str.to_s.split.each do |cls|
-          prefix, base_class = extract_modifier_prefix(cls)
-
-          spacing = spacing_info(base_class)
-          if spacing
-            # Remove any existing spacing classes that overlap on same type and axes
-            # within the same modifier prefix
-            spacing_by_prefix[prefix].reject! do |existing|
-              existing[:info][:type] == spacing[:type] &&
-                existing[:info][:axes].subset?(spacing[:axes])
-            end
-            spacing_by_prefix[prefix] << {class: cls, info: spacing}
-          else
-            category = detect_category(base_class)
-            if category
-              key = "#{prefix}:#{category}"
-              categorized[key] = cls
-            else
-              uncategorized << cls unless uncategorized.include?(cls)
-            end
-          end
-        end
-      end
-
-      spacing_classes = spacing_by_prefix.values.flatten.map { |s| s[:class] }
-      (uncategorized + spacing_classes + categorized.values).join(" ")
-    end
-
-    def spacing_info(css_class)
-      # Check padding/margin with single regex (replaces 14 pattern checks)
-      if (match = css_class.match(SPACING_REGEX))
-        type = (match[1] == "p") ? :padding : :margin
-        axes = SPACING_AXIS_MAP[match[2]]
-        return {type:, axes:}
-      end
-
-      # Check border width (needs separate handling due to anchoring)
-      if (match = css_class.match(BORDER_REGEX))
-        axes = SPACING_AXIS_MAP[match[1]]
-        return {type: :border, axes:}
-      end
-
-      nil
-    end
-
-    def detect_category(css_class)
-      CATEGORIES.find { |_name, pattern| css_class.match?(pattern) }&.first
-    end
-
-    # Extracts the modifier prefix from a Tailwind class
-    # e.g., "md:hover:bg-blue-500" → ["md:hover", "bg-blue-500"]
-    # e.g., "bg-white" → ["", "bg-white"]
-    def extract_modifier_prefix(css_class)
-      # Fast path: most classes don't have modifiers
-      return ["", css_class] unless css_class.include?(":")
-
-      parts = css_class.split(":")
-      return ["", css_class] if parts.size == 1
-
-      # Find where modifiers end and the actual class begins
-      modifier_parts = []
-      parts.each_with_index do |part, i|
-        if known_modifier?(part) && i < parts.size - 1
-          modifier_parts << part
-        else
-          base_class = parts[i..].join(":")
-          return [modifier_parts.join(":"), base_class]
-        end
-      end
-
-      # Fallback (shouldn't reach here)
-      ["", css_class]
-    end
-
-    def known_modifier?(str)
-      return true if KNOWN_MODIFIERS.include?(str)
-      MODIFIER_PATTERNS.any? { |pattern| str.match?(pattern) }
+      MERGER.merge(input)
     end
   end
 
