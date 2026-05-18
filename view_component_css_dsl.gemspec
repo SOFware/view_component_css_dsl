@@ -28,9 +28,20 @@ Gem::Specification.new do |spec|
   end
   spec.require_paths = ["lib"]
 
+  ###################################################################################
+  # Dependencies
+  ###################################################################################
+
   spec.add_dependency "activesupport", ">= 7.0", "< 9"
+
+  # https://github.com/gjtorikian/tailwind_merge
+  spec.add_dependency "tailwind_merge", "~> 1.0"
+
+  # https://github.com/ViewComponent/view_component
+  # https://viewcomponent.org/
   spec.add_dependency "view_component", "~> 4.0"
 
+  # Development dependencies
   spec.add_development_dependency "reissue", "~> 0.4"
   spec.add_development_dependency "rspec", "~> 3.0"
   spec.add_development_dependency "standard", "~> 1.0"

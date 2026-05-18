@@ -410,7 +410,7 @@ Renders:
 
 ## Smart merge behavior
 
-Smart-merge handles Tailwind's conventions so caller and component CSS can coexist sensibly. In every row below, the **Component** column is what the component declared via `css`, and the **Caller** column is what was passed in `class:` at the call site.
+Smart-merge handles Tailwind's conventions so caller and component CSS can coexist sensibly. Under the hood it delegates to the [`tailwind_merge`](https://github.com/gjtorikian/tailwind_merge) gem, which mirrors [tailwind-merge](https://github.com/dcastil/tailwind-merge) (JS) semantics. In every row below, the **Component** column is what the component declared via `css`, and the **Caller** column is what was passed in `class:` at the call site.
 
 | Component | Caller | Final classes | Why |
 | --- | --- | --- | --- |
@@ -426,6 +426,19 @@ Smart-merge handles Tailwind's conventions so caller and component CSS can coexi
 | `bg-white` | `data-[open]:bg-gray-100` | `bg-white data-[open]:bg-gray-100` | Arbitrary modifier is its own namespace |
 
 Modifier prefixes (`hover:`, `md:`, `dark:`, `group/`, `peer-checked:`, `aria-*`, arbitrary `[…]` values, etc.) form their own merge namespace, so `hover:bg-blue-500` never conflicts with a base `bg-white`.
+
+### JS-toggle visibility — use the `hidden` attribute, not the class
+
+`hidden` is treated as part of the display group, so `"flex hidden"` collapses to `"hidden"` (the same as upstream tailwind-merge). If you need to toggle visibility from JavaScript while preserving a base display class, use the HTML5 `hidden` attribute via the `attribute` DSL:
+
+```ruby
+class PaneComponent < ApplicationComponent
+  css "block"
+  attribute hidden: -> { collapsed? }
+end
+```
+
+Then toggle from JS with `element.toggleAttribute('hidden')` or `element.hidden = true/false`. The class merger stays out of the way and the element retains its `block`/`flex`/etc. layout when shown.
 
 ## Inheritance
 
