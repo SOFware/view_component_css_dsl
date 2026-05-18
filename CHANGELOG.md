@@ -2,6 +2,8 @@
 
 
 
+## [0.1.4] - Unreleased
+
 ## [0.1.3] - 2026-05-18
 
 ### Changed
@@ -11,9 +13,3 @@
 ### Breaking
 
 - `hidden` is now treated as part of the display-class conflict group. Strings like `"flex hidden"` collapse to `"hidden"` rather than keeping both. Previous behavior was non-standard — `tailwind-merge` (JS) and `tailwind_merge` (Ruby) have always treated `hidden` as a display utility. For JS-toggle visibility patterns, use the HTML5 `hidden` attribute (e.g., `attribute hidden: -> { … }` or pass `hidden: true` as an html_attr) and toggle it with `element.toggleAttribute('hidden')` instead of relying on the class merger.
-
-## [0.1.2] - 2026-05-15
-
-### Added
-
-- data, aria, and attribute DSL declarators for first-class HTML attribute declarations (cf37050)
