@@ -3,10 +3,25 @@
 require "view_component_css_dsl"
 
 # Static checks over a component's DSL declarations. Catches the mistakes the DSL
-# itself can't surface until render time (or surfaces silently): hallucinated
-# Tailwind classes, self-conflicting declarations, rules referencing undefined
-# methods, axes no initializer sets, and templates that forget the html_attrs
-# splat. Designed to be fast enough to run on every edit.
+# itself can't surface until render time (or surfaces silently). Designed to be
+# fast enough to run on every edit.
+#
+# The six checks:
+#
+#   class_validity  - every declared class exists in the compiled Tailwind output;
+#                     catches typos, hallucinated classes, and theme values that
+#                     don't exist (requires known_classes:)
+#   self_conflicts  - no declaration conflicts with itself; catches e.g.
+#                     css "block flex" silently dropping "block"
+#   method_rules    - every Symbol in css/data/aria/attribute rules resolves to a
+#                     method; catches render-time NoMethodErrors
+#   axes_settable   - every axis has an initialize param or @ivar assignment;
+#                     catches variant rules that can never fire
+#   variant_matrix  - #css builds cleanly for every axis-value combination;
+#                     smoke-catches anything the static checks miss, no rendering
+#   template_splat  - every template (sidecar, inline erb_template, or manual
+#                     #call) references html_attrs; catches components whose DSL
+#                     output never reaches the DOM
 #
 #   verifier = ViewComponentCssDsl::Verifier.new(known_classes: oracle)
 #   findings = verifier.verify(ButtonComponent)
