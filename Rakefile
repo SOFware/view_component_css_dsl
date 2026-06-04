@@ -14,4 +14,7 @@ require "reissue/gem"
 Reissue::Task.create :reissue do |task|
   task.version_file = "lib/view_component_css_dsl/version.rb"
   task.fragment = :git
+  # Keep the full release history in CHANGELOG.md. The default (2) trims all but
+  # the newest two versions on every bump.
+  task.version_limit = 999
 end
