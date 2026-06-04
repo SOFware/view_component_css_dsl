@@ -2,7 +2,11 @@
 
 
 
-## [0.1.4] - Unreleased
+## [0.1.4] - 2026-06-04
+
+### Added
+
+- ViewComponentCssDsl::Verifier — six static checks for component declarations: Tailwind class validity (via a compiled-CSS oracle), self-conflicting declarations, method-rule resolution, axis settability, variant-matrix smoke, and template html_attrs splat coverage (4be2024)
 
 ## [0.1.3] - 2026-05-18
 
