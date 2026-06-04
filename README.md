@@ -458,6 +458,41 @@ end
 
 Axis, method, and proc rules are appended, not overridden.
 
+## Verifier
+
+The DSL's worst failure modes are silent: a typo'd or hallucinated Tailwind class produces no CSS at all under JIT, a self-conflicting declaration quietly drops a class, and a rule referencing a missing method only raises at render time on the code path that hits it. `ViewComponentCssDsl::Verifier` catches all of these statically — fast enough to run on every edit.
+
+```ruby
+require "view_component_css_dsl/verifier"
+
+oracle = ViewComponentCssDsl::Verifier::CompiledCssOracle.new(
+  "app/assets/builds/tailwind.css"
+)
+verifier = ViewComponentCssDsl::Verifier.new(known_classes: oracle)
+
+findings = components.flat_map { |component| verifier.verify(component) }
+puts findings
+abort if findings.any?(&:error?)
+```
+
+`verify(component)` returns `Finding` structs (`component`, `check`, `severity`, `message`). Six checks run:
+
+| Check | Asserts | Catches |
+| --- | --- | --- |
+| `class_validity` | Every declared class exists in the compiled Tailwind output | Typos, hallucinated classes, theme values that don't exist |
+| `self_conflicts` | No declaration conflicts with itself | `css "block flex"` silently dropping `block` |
+| `method_rules` | Every Symbol in `css`/`data`/`aria`/`attribute` rules resolves to a method | Render-time `NoMethodError`s |
+| `axes_settable` | Every axis has an initialize param or `@ivar` assignment | Variant rules that can never fire |
+| `variant_matrix` | `#css` builds cleanly for every axis-value combination | Anything the static checks miss, without rendering |
+| `template_splat` | Every template references `html_attrs` | Components whose DSL output never reaches the DOM |
+
+Notes:
+
+- **Verify every class in the hierarchy**, abstract bases included. Declaration checks only inspect what each class itself declared, so a parent's mistakes are reported once — on the parent.
+- `known_classes:` is anything responding to `include?(String)`. `CompiledCssOracle` parses class selectors out of a compiled Tailwind build; since Tailwind's JIT generates a rule for every valid class found in your content globs, a declared class missing from the output is invalid. Rebuild before verifying — the oracle is only as fresh as the build. Omit `known_classes:` to skip the check.
+- `template_splat` covers sidecar files, inline templates (`erb_template "..."`), and hand-written `#call` methods.
+- The variant matrix smoke-tests on bare (`allocate`d) instances. Method and proc rules that need `initialize` state report as warnings rather than errors.
+
 ## Development
 
 ```sh
