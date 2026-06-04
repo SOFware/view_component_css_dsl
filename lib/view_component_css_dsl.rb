@@ -36,6 +36,9 @@ module ViewComponentCssDsl
 
   included do
     class_attribute :_css_base, instance_writer: false, default: ""
+    # Base css strings as written, before inheritance merging. The merged _css_base
+    # is conflict-free by construction; the Verifier needs the raw declarations.
+    class_attribute :_css_base_declarations, instance_writer: false, default: []
     class_attribute :_css_axis_rules, instance_writer: false, default: []
     class_attribute :_css_method_rules, instance_writer: false, default: []
     class_attribute :_css_proc_rules, instance_writer: false, default: []
@@ -79,6 +82,7 @@ module ViewComponentCssDsl
       when String
         if options.empty?
           # Base CSS: css "rounded p-4"
+          self._css_base_declarations = _css_base_declarations + [args.first]
           parent_base_css = superclass.respond_to?(:_css_base) ? superclass._css_base : ""
           self._css_base = if parent_base_css.present?
             smart_merge(parent_base_css, args.first)
