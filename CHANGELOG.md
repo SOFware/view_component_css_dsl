@@ -2,11 +2,16 @@
 
 
 
-## [0.1.5] - Unreleased
+## [0.1.5] - 2026-06-09
 
 ### Added
 
 - ViewComponentCssDsl::Verifier cross_declaration_conflicts check — warns when a class declared in one place (e.g. a base `leading-snug`) is silently dropped because a *different* declaration merged on top of it (e.g. a size axis's `text-sm`, since Tailwind font-size utilities also set line-height). Suppresses intentional same-family overrides (`p-2` → `p-8`) and surfaces only cross-family drops.
+- Verifier cross_declaration_conflicts check warning on classes silently dropped when separate DSL declarations merge (168a79e)
+
+### Fixed
+
+- CHANGELOG.md retains the full release history (old entries were trimmed on every version bump) (793d53e)
 
 ## [0.1.4] - 2026-06-04
 
