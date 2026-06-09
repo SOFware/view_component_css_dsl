@@ -462,12 +462,13 @@ Axis, method, and proc rules are appended, not overridden.
 
 The DSL's worst failure modes are silent: a typo'd or hallucinated Tailwind class produces no CSS at all under JIT, a self-conflicting declaration quietly drops a class, and a rule referencing a missing method only raises at render time on the code path that hits it. `ViewComponentCssDsl::Verifier` catches all of these statically — fast enough to run on every edit.
 
-`verify(component)` returns `Finding` structs (`component`, `check`, `severity`, `message`). Six checks run:
+`verify(component)` returns `Finding` structs (`component`, `check`, `severity`, `message`). Seven checks run:
 
 | Check | Asserts | Catches |
 | --- | --- | --- |
 | `class_validity` | Every declared class exists in the compiled Tailwind output | Typos, hallucinated classes, theme values that don't exist |
 | `self_conflicts` | No declaration conflicts with itself | `css "block flex"` silently dropping `block` |
+| `cross_declaration_conflicts` | No class declared in one place is silently dropped when a different declaration merges on top of it | A base `leading-snug` that a size axis's `text-sm` overrides (font-size utilities also set line-height) |
 | `method_rules` | Every Symbol in `css`/`data`/`aria`/`attribute` rules resolves to a method | Render-time `NoMethodError`s |
 | `axes_settable` | Every axis has an initialize param or `@ivar` assignment | Variant rules that can never fire |
 | `variant_matrix` | `#css` builds cleanly for every axis-value combination | Anything the static checks miss, without rendering |
