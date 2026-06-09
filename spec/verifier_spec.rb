@@ -101,6 +101,58 @@ RSpec.describe ViewComponentCssDsl::Verifier do
     end
   end
 
+  describe "cross declaration conflicts" do
+    it "warns when a base class is dropped by an axis rule's class" do
+      component = Class.new(TestComponent) do
+        css "leading-snug rounded"
+        css size: :sm, style: "text-sm"
+
+        def initialize(size: :sm)
+          @size = size
+        end
+      end
+
+      findings = findings_for(component, :cross_declaration_conflicts)
+      expect(findings.size).to eq(1)
+      expect(findings.first.severity).to eq(:warning)
+      expect(findings.first.message).to include("leading-snug")
+      expect(findings.first.message).to include("text-sm")
+    end
+
+    it "does not flag a same-family override (intentional)" do
+      component = Class.new(TestComponent) do
+        css "p-2"
+        css size: :lg, style: "p-8"
+
+        def initialize(size: :lg)
+          @size = size
+        end
+      end
+
+      expect(findings_for(component, :cross_declaration_conflicts)).to be_empty
+    end
+
+    it "does not double-report a single-declaration conflict" do
+      component = Class.new(TestComponent) { css "block flex" }
+
+      expect(findings_for(component, :cross_declaration_conflicts)).to be_empty
+      expect(findings_for(component, :self_conflicts)).not_to be_empty
+    end
+
+    it "passes a clean component" do
+      component = Class.new(TestComponent) do
+        css "rounded p-4"
+        css size: :sm, style: "min-h-6"
+
+        def initialize(size: :sm)
+          @size = size
+        end
+      end
+
+      expect(findings_for(component, :cross_declaration_conflicts)).to be_empty
+    end
+  end
+
   describe "method rules resolve" do
     it "flags a css rule referencing an undefined method" do
       component = Class.new(TestComponent) { css :missing?, style: "opacity-50" }

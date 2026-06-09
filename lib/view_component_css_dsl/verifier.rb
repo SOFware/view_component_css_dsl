@@ -6,13 +6,17 @@ require "view_component_css_dsl"
 # itself can't surface until render time (or surfaces silently). Designed to be
 # fast enough to run on every edit.
 #
-# The six checks:
+# The seven checks:
 #
 #   class_validity  - every declared class exists in the compiled Tailwind output;
 #                     catches typos, hallucinated classes, and theme values that
 #                     don't exist (requires known_classes:)
 #   self_conflicts  - no declaration conflicts with itself; catches e.g.
 #                     css "block flex" silently dropping "block"
+#   cross_declaration_conflicts - no class declared in one place is silently
+#                     dropped when a different declaration merges on top of it;
+#                     catches e.g. a base leading-snug that a size axis's text-sm
+#                     overrides (font-size utilities also set line-height)
 #   method_rules    - every Symbol in css/data/aria/attribute rules resolves to a
 #                     method; catches render-time NoMethodErrors
 #   axes_settable   - every axis has an initialize param or @ivar assignment;
@@ -59,6 +63,7 @@ class ViewComponentCssDsl::Verifier
   def verify(component)
     check_class_validity(component) +
       check_self_conflicts(component) +
+      check_cross_declaration_conflicts(component) +
       check_method_rules(component) +
       check_axes_settable(component) +
       check_variant_matrix(component) +
@@ -103,6 +108,32 @@ class ViewComponentCssDsl::Verifier
       end
 
       results
+    end
+  end
+
+  # A class declared in one place can be silently dropped when a *different*
+  # declaration is merged on top of it — the blind spot check_self_conflicts
+  # (one declaration at a time) and check_variant_matrix (exceptions only) both
+  # miss. The footgun: a base `leading-snug` that a size axis's `text-sm`
+  # overrides, because Tailwind font-size utilities also set line-height.
+  #
+  # Reported as warnings, not errors: a cross-declaration drop is often
+  # intentional — a variant overriding a base default. We suppress same-family
+  # overrides (p-2 -> p-8) and surface only drops whose winning class is a
+  # different utility family (leading-snug dropped by text-sm), which is almost
+  # always a surprise.
+  def check_cross_declaration_conflicts(component)
+    axis_combinations(component).flat_map do |combo|
+      tokens = contributing_tokens(component, combo)
+      next [] if tokens.size < 2
+
+      survivors = component.smart_merge(tokens.map { |t| t[:class] }.join(" ")).split
+      dropped_conflicts(component, tokens, survivors).map do |dropped, winner|
+        finding(component, :cross_declaration_conflicts, :warning,
+          "#{dropped[:label]}: \"#{dropped[:class]}\" is silently dropped when " \
+          "merged with \"#{winner[:class]}\" from #{winner[:label]} (both set " \
+          "the same CSS property)")
+      end
     end
   end
 
@@ -225,6 +256,65 @@ class ViewComponentCssDsl::Verifier
   def resolves?(component, method_name)
     component.method_defined?(method_name) ||
       component.private_method_defined?(method_name)
+  end
+
+  ##################################################################################
+  # Cross-declaration conflicts
+  ##################################################################################
+
+  # {class:, label:} for every class the static declarations contribute for this
+  # combo, in merge order: base declarations first, then matching axis rules.
+  def contributing_tokens(component, combo)
+    declarations =
+      base_declarations(component) + matching_axis_declarations(component, combo)
+    declarations.flat_map do |label, styles|
+      styles.split.map { |cls| {class: cls, label:} }
+    end
+  end
+
+  def base_declarations(component)
+    component._css_base_declarations.map { |styles| ["css \"#{styles}\"", styles] }
+  end
+
+  def matching_axis_declarations(component, combo)
+    component._css_axis_rules.filter_map do |rule|
+      matches = rule[:axes].all? { |axis, value| combo[axis] == value }
+      [axis_label(rule[:axes]), rule[:styles]] if matches
+    end
+  end
+
+  # [dropped_token, winning_token] pairs the merge silently removed. A class is
+  # dropped when it's absent from survivors; its winner is the later class that
+  # displaced it (found by pairwise re-merge). Only cross-declaration,
+  # cross-family pairs are returned — same-declaration drops belong to
+  # check_self_conflicts, same-family drops are intentional overrides.
+  def dropped_conflicts(component, tokens, survivors)
+    tokens.each_with_index.filter_map do |token, index|
+      next if survivors.include?(token[:class])
+
+      winner = winning_token(component, tokens, index)
+      next unless winner
+      next if winner[:label] == token[:label]
+      next if utility_family(winner[:class]) == utility_family(token[:class])
+
+      [token, winner]
+    end
+  end
+
+  # The later token that displaces tokens[index]: the first subsequent token
+  # that, merged after it, wins outright.
+  def winning_token(component, tokens, index)
+    dropped = tokens[index][:class]
+    tokens.drop(index + 1).find do |candidate|
+      merged = component.smart_merge("#{dropped} #{candidate[:class]}").split
+      merged == [candidate[:class]]
+    end
+  end
+
+  # The utility family of a Tailwind class, ignoring variant prefixes and
+  # negativity: hover:-mt-2 -> "mt", leading-snug -> "leading", text-sm -> "text".
+  def utility_family(token)
+    token.split(":").last.delete_prefix("-").split("-").first
   end
 
   ##################################################################################
